@@ -53,7 +53,7 @@ public class BidiProtocol implements BidiMessagingProtocol<String> {
                 break;
 
             case "REQUEST":
-                request(dataholder);
+                request(dataholder, message);
                 break;
         }
     }
@@ -69,7 +69,7 @@ public class BidiProtocol implements BidiMessagingProtocol<String> {
                 logger.get(name).set(false);
                 logger.remove(name);
                 connections.send(connectionId, "ACK signout succeeded");
-                connections.disconnect(connectionId);//get him out of connections
+                connections.disconnect(connectionId);
             }
         }
         else connections.send(connectionId, "ERROR signout "+  "failed");
@@ -79,7 +79,7 @@ public class BidiProtocol implements BidiMessagingProtocol<String> {
             String[] data = dataholder.split(" ");
             boolean success;
 
-            if (isLoggedIn || logger.get(data[0]) == null)//only read from logger so no problem in here
+            if (isLoggedIn || logger.get(data[0]) == null)
                 success = MessageHandler.register(data);
             else success = false;
 
@@ -114,9 +114,9 @@ public class BidiProtocol implements BidiMessagingProtocol<String> {
         }
     }
 
-    private void request(String dataholder){
+    private void request(String dataholder, String message){
         String[] data = dataholder.split(" ");
-        
+
         if(!isLoggedIn){
             String error = new String ("ERROR request " + Request.getRequestType(data) + " failed");
             connections.send(connectionId, error);
