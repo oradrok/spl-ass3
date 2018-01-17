@@ -2,6 +2,8 @@ package bgu.spl181.net.srv;
 
 import bgu.spl181.net.api.MessageEncoderDecoder;
 import bgu.spl181.net.api.bidi.BidiMessagingProtocol;
+import bgu.spl181.net.api.bidi.Connections;
+import bgu.spl181.net.srv.ConnectionHandler;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -17,48 +19,56 @@ public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
 
     private final BidiMessagingProtocol<T> protocol;
     private final MessageEncoderDecoder<T> encdec;
-    private final Queue<ByteBuffer> writeQueue = new ConcurrentLinkedQueue<>();//so called out
-    private final SocketChannel channel;
+    private final Queue<ByteBuffer> writeQueue = new ConcurrentLinkedQueue<>();
+    private final SocketChannel chan;
     private final Reactor reactor;
+    private Connections<T> connections;
+    private int connid;
 
     public NonBlockingConnectionHandler(
-            MessageEncoderDecoder reader,
-            BidiMessagingProtocol protocol,
-            SocketChannel channel,
-            Reactor reactor) {
+            MessageEncoderDecoder<T> reader,
+            BidiMessagingProtocol<T> protocol,
+            SocketChannel chan,
+            Reactor reactor,
+            Connections<T> connections,
+            int connid) {
 
-        this.channel    = channel;
-        this.encdec     = reader;
-        this.protocol   = protocol;
-        this.reactor    = reactor;
+        this.chan           = chan;
+        this.encdec         = reader;
+        this.protocol       = protocol;
+        this.reactor        = reactor;
+        this.connid         = connid;
+        this.connections    = connections;
+
+        this.protocol.start(connid, connections);
     }
 
-    public Runnable continueRead() {//runs by the SelectorThread- makes input into a task
-        ByteBuffer buffer  = leaseBuffer();
+    public Runnable continueRead() {
+        ByteBuffer buf  = leaseBuffer();
         boolean success = false;
 
         try {
-            success = channel.read(buffer) != -1;
+            success = chan.read(buf) != -1;
         } catch (IOException ex) {
             ex.printStackTrace();
         }
 
         if (success) {
-            buffer.flip();
-            return () -> {//lambda to give the executor
+            buf.flip();
+            return () -> {
                 try {
-                    while (buffer.hasRemaining()) {
-                        T nextMessage = encdec.decodeNextByte(buffer.get());
+                    while (buf.hasRemaining()) {
+                        T nextMessage = encdec.decodeNextByte(buf.get());
                         if (nextMessage != null) {
-                            protocol.process(nextMessage);//getting the answer to the message
+                            protocol.process(nextMessage);
                         }
                     }
                 } finally {
-                    releaseBuffer(buffer);
+                    releaseBuffer(buf);
                 }
             };
         } else {
-            releaseBuffer(buffer);
+            releaseBuffer(buf);
             close();
             return null;
         }
@@ -66,27 +76,27 @@ public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
     }
 
     public void close() {
-        System.out.println("client disconnected");
         try {
-            channel.close();
+            chan.close();
         } catch (IOException ex) {
             ex.printStackTrace();
         }
     }
 
     public boolean isClosed() {
-        return !channel.isOpen();
+        return !chan.isOpen();
     }
 
-    public void continueWrite() {//committed by the SelectorThread
-        while (!writeQueue.isEmpty()&!isClosed()) {
+    public void continueWrite() {
+        while (!writeQueue.isEmpty()) {
             try {
                 ByteBuffer top = writeQueue.peek();
-                channel.write(top);//deletes bytes from the buffer and write them to WriteQueue
-                if (top.hasRemaining()) {//if we couldn't finish write the whole message
-                    return;//thread will go to sleep until next time
-                } else {//if we emptied the buffer
-                    writeQueue.remove();//removes buffer itself from queue
+                chan.write(top);
+
+                if (top.hasRemaining()) {
+                    return;
+                } else {
+                    writeQueue.remove();
                 }
             } catch (IOException ex) {
                 ex.printStackTrace();
@@ -94,9 +104,9 @@ public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
             }
         }
 
-        if (writeQueue.isEmpty()) {//assuming we finished writing all what was in WriteQueue
+        if (writeQueue.isEmpty()) {
             if (protocol.shouldTerminate()) close();
-            else reactor.updateInterestedOps(channel, SelectionKey.OP_READ);//updating selector to notify only when READ happens
+            else reactor.updateInterestedOps(chan, SelectionKey.OP_READ);
         }
     }
 
@@ -105,6 +115,7 @@ public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
         if (buff == null) {
             return ByteBuffer.allocateDirect(BUFFER_ALLOCATION_SIZE);
         }
+
         buff.clear();
         return buff;
     }
@@ -114,9 +125,11 @@ public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
     }
 
     @Override
-    public void send(T msg) {// assuming msg not null
-        writeQueue.add(ByteBuffer.wrap(encdec.encode(msg)));//adding the out message
-        reactor.updateInterestedOps(channel, SelectionKey.OP_READ | SelectionKey.OP_WRITE);
+    public void send(T msg) {
+        if (chan.isConnected() && !isClosed()) {
+            writeQueue.add(ByteBuffer.wrap(encdec.encode(msg)));
+            reactor.updateInterestedOps(chan, SelectionKey.OP_WRITE | SelectionKey.OP_READ);
 
+        }
     }
 }
