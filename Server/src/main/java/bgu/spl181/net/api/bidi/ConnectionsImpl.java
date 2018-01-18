@@ -11,6 +11,7 @@ public class ConnectionsImpl<T> implements Connections<T> {
     public ConnectionsImpl (){
         ClientList = new ConcurrentHashMap<>();
     }
+
     @Override
     public boolean send(int connectionId, T msg) {
         if (!ClientList.containsKey(connectionId))

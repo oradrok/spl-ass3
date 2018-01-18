@@ -122,11 +122,11 @@ public class BidiProtocol implements BidiMessagingProtocol<String> {
             connections.send(connectionId, error);
         }
         else {
-            Request r = MessageHandler.request(data, this.name, message);
-            String answer = r.answer;
-            String broadcast = r.broadcast;
-            connections.send(connectionId,answer);
+            Request r           = MessageHandler.request(data, this.name, message);
+            String answer       = r.answer;
+            String broadcast    = r.broadcast;
 
+            connections.send(connectionId,answer);
 
             if(broadcast != null){
                 for (String k : logger.keySet()){
